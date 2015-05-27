@@ -9,6 +9,10 @@ Icinga/Nagios meaning of service) from SCOM.
 The other part of the tool will query all open alerts from SCOM and publish that
 status into Icinga, so you can see and get alerted about open problems.
 
+## Notice
+
+This tool is currently work in progress, but feel free to play and comment! :-)
+
 ## Requirements
 
 * Perl, at least 5.10 (tested on that platform)
@@ -137,6 +141,14 @@ By default you should only configure:
 * Icinga's command pipe location
 
 See `scom_connector.conf.example` for examples.
+
+## Contributing
+
+You can contribute to this project via GitHub: https://github.com/lazyfrosch/icinga2-scom-connector
+
+* Fork the project
+* Commit and push to your fork
+* Send me a pull request
 
 ## License
 
