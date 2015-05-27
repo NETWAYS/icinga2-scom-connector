@@ -1,0 +1,606 @@
+#!/usr/bin/perl
+#-------------------------------------------------------------------------------
+# SCOM Connector for Icinga 2
+#-------------------------------------------------------------------------------
+# (c) 2015 Markus Frosch <markus.frosch@netways.de>
+#          NETWAYS GmbH <info@netways.de>
+#-------------------------------------------------------------------------------
+#
+# Required for this software is:
+# * FreeTDS - an free software implementation of MSSQL's API
+# * DBD::Sybase for perl - the perl database driver to FreeTDS
+# * DBD::mysql for perl - for connecting to Icinga's IDO
+#
+# Please make sure to set "tds version = 7.2"
+# inside "[global]" of /etc/freetds.conf
+#
+# Check "icinga2_scom.conf" for some basic objects that are required in the
+# Icinga 2 configuration.
+#
+#-------------------------------------------------------------------------------
+# This program is free software; you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation; either version 2 of the License, or (at your option) any later
+# version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+#
+# You can find a full version of the license at:
+# http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+#-------------------------------------------------------------------------------
+
+
+=head1 NAME
+
+scom_connector - SCOM Connector for Icinga 2
+
+=head1 SYNOPSIS
+
+scom_connector [-d] action
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<--help|-h>
+
+Print this help
+
+=item B<--debug|-d>
+
+Run the tool in debug mode
+
+=item B<action>
+
+What to do:
+
+[config]
+
+Output Icinga 2 configuration of Computers and Services monitored by SCOM.
+
+This is ready made for passive alerting made by this script.
+
+[monitor]
+
+Collect all existing alerts from SCOM and publish them to Icinga 2.
+
+Also we make sure to clear all old Alerts from Icinga's status.
+
+=cut
+
+#--[ GLOBALS ]------------------------------------------{{{-
+
+use strict;
+use warnings;
+
+$SIG{INT} = \&signal_handler;
+$SIG{TERM} = \&signal_handler;
+$SIG{__DIE__} = \&signal_handler;
+$SIG{QUIT} = \&signal_handler;
+
+sub signal_handler {
+  my $desc = shift;
+  printf "UNKNOWN - program ended unexcepted: %s\n", $desc;
+  exit(3);
+}
+
+use Data::Dumper; # TODO: needed?
+use Getopt::Long;
+use Pod::Usage;
+use DBI;
+use Date::Parse;
+use File::Basename;
+use Cwd 'abs_path';
+use POSIX 'strftime';
+
+my $CLEANEXIT = 0;
+
+my $DEBUG;
+
+my $SCOMDB;
+my $ICINGADB;
+
+#-------------------------------------------------------}}}-
+
+#--[ DEFAULT CONFIG ]---------------------------------------
+
+# Please edit scom_connector.conf for your local settings!
+
+# default: in same directory as scom_connector
+my $CONFIG_FILE = abs_path(dirname($0))."/scom_connector.conf";
+
+my $ICINGA_CONNECTOR_HOST = "SCOM Connector";
+my $ICINGA_SERVICE = "SCOM Alerts";
+my $ICINGA_UNASSIGNED_SERVICE = "SCOM unassigned Alerts";
+
+# database account for SCOM
+# read-only access to:
+#  OperationsManager
+#  OperationsManagerDW
+# TODO: specify tables
+#
+# Please make sure to set "tds version = 7.2"
+# inside "[global]" of /etc/freetds.conf
+my $SCOM_DB_DSN  = "dbi:Sybase:server=SCOM\\SCOM";
+my $SCOM_DB_USER = "icinga";
+my $SCOM_DB_PASS = "readonly";
+
+# database access for Icinga
+# read-only access to Icinga's IDO database
+my $ICINGA_DB_DSN  = "dbi:mysql:host=icinga;database=icinga";
+my $ICINGA_DB_USER = "icinga";
+my $ICINGA_DB_PASS = "icinga";
+
+# Icinga command pipe for submitting check results
+my $ICINGA_CMD = "/var/run/icinga2/cmd/icinga2.cmd";
+
+#-----------------------------------------------------------
+
+#--[ QUERIES ]------------------------------------------{{{-
+
+my $QUERY_ENTITIES = "
+  SELECT
+    basetype.TypeName as BaseType,
+    type.TypeName as Type,
+    COALESCE(entity.Name, entity.DisplayName) as Name,
+    entity.BaseManagedEntityId
+  FROM      [OperationsManager].[dbo].[BaseManagedEntity] entity
+  LEFT JOIN [OperationsManager].[dbo].ManagedType type
+    ON type.ManagedTypeId = entity.BaseManagedTypeId
+  LEFT JOIN [OperationsManager].[dbo].ManagedType basetype
+    ON basetype.ManagedTypeId = type.BaseManagedTypeId
+  WHERE
+    entity.IsDeleted = 0
+    AND (
+      basetype.TypeName = 'System.Computer'
+      OR basetype.TypeName = 'System.Service'
+    )
+  ORDER BY Type ASC
+";
+
+my $QUERY_ALERTS = "
+SELECT
+  topentity.Name AS EntityName,
+  topentitybasetype.TypeName AS EntityBaseType,
+  topentitytype.TypeName AS EntityType,
+  COALESCE(entity.Name, entity.DisplayName) AS ObjectName,
+  entitytype.TypeName AS ObjectType,
+  alert.TimeRaised,
+  alert.Category,
+  alert.Severity,
+  COALESCE(prettyalert.AlertName, rules.RuleName, alert.AlertName) as AlertName,
+  COALESCE(prettyalert.AlertDescription, alert.AlertDescription) as AlertDescription
+-- Base Data Query on Alerts
+FROM OperationsManager.dbo.Alert alert
+-- pretty version of the Alert from the Datawarehouse
+LEFT JOIN OperationsManagerDW.Alert.vAlert prettyalert
+  ON prettyalert.AlertGuid = alert.AlertId
+-- the entity which the alert is attached to
+LEFT JOIN OperationsManager.dbo.BaseManagedEntity entity
+  ON entity.BaseManagedEntityId = alert.BaseManagedEntityId
+-- the top entity, most of the time the host
+LEFT JOIN OperationsManager.dbo.BaseManagedEntity topentity
+  ON topentity.BaseManagedEntityId = entity.TopLevelHostEntityId
+-- the type of the alerted entity
+LEFT JOIN OperationsManager.dbo.ManagedType entitytype
+  ON entitytype.ManagedTypeId = entity.BaseManagedTypeId
+-- the type of the alerted top entity
+LEFT JOIN OperationsManager.dbo.ManagedType topentitytype
+  ON topentitytype.ManagedTypeId = topentity.BaseManagedTypeId
+-- the generic type of the entity
+LEFT JOIN OperationsManager.dbo.ManagedType topentitybasetype
+  ON topentitybasetype.ManagedTypeId = topentitytype.BaseManagedTypeId
+-- Fallback for missing AlertName
+LEFT JOIN OperationsManager.dbo.Rules rules
+  ON rules.RuleId = alert.RuleId
+-- Open alerts
+WHERE
+  ResolutionState = 0
+  -- we simply ignore infos
+  AND alert.Severity > 0
+-- ordering
+ORDER BY alert.Severity DESC, alert.TimeRaised DESC
+";
+
+#-------------------------------------------------------}}}-
+
+#--[ FUNCTIONS ]--------------------------------------------
+
+sub debug { # {{{
+  return if ! $DEBUG;
+  my $message = shift;
+  my $output = sprintf $message, @_;
+  $output =~ s/\r?\n/\n# /g;
+  print STDERR sprintf "# %s\n", $output;
+}
+# }}}
+
+sub icinga_output { # {{{
+  my $code = shift;
+  my $message = shift;
+
+  $message = sprintf $message, @_;
+  $message =~ s/\s+$//g;
+
+  my $codemap = {
+    0 => 'OK',
+    1 => 'WARNING',
+    2 => 'CRITICAL',
+    3 => 'UNKNOWN',
+  };
+
+  if ($code > 3 or $code < 0) {
+    $code = 3;
+  }
+  return sprintf "%s - %s\n",
+    $codemap->{$code},
+    $message;
+}
+# }}}
+
+sub icinga_exit { # {{{
+  print icinga_output(@_);
+  $CLEANEXIT = 1;
+  exit($_[0]);
+}
+# }}}
+
+sub parse_options { # {{{
+  my $help;
+  my $config;
+  GetOptions(
+    "debug|d"        => \$DEBUG,
+    "config|C=s"     => \$config,
+    "help|h"         => \$help,
+    # TODO: implement
+    #"icinga-cmd|C=s" => \$ICINGA_CMD,
+    #"icinga-db-dsn|=s" => \$ICINGA_DB_DSN,
+    #"icinga-db-user|=s" => \$ICINGA_DB_DSN,
+    #"icinga-db-pass|=s" => \$ICINGA_DB_DSN,
+  ) or die "error in command line arguments";
+  pod2usage(1) if $help;
+
+  if ($config) {
+    if (! -r $config) {
+      die sprintf "can not read config file '%s'!", $config;
+    }
+    $CONFIG_FILE = $config;
+  }
+  if (-r $CONFIG_FILE) {
+    my $config_data = "";
+    open CF, "<", $CONFIG_FILE or
+      die "could not open config file: $!";
+    while (<CF>) {
+      $config_data .= $_;
+    }
+    close CF;
+    eval $config_data;
+    die "Error while reading config file: $@" if $@;
+  }
+}
+# }}}
+
+sub config { # {{{
+  debug "Ok, let me collect config data...";
+
+  my $computers = {};
+  my $services = {};
+
+  my $sth = $SCOMDB->prepare($QUERY_ENTITIES)
+    or die "error preparing sql query for entities: ".$SCOMDB->errstr;
+
+  my $res = $sth->execute()
+    or die "error querying entities: ".$sth->errstr;
+
+  my $count = 0;
+  while (my $data = $sth->fetchrow_hashref) {
+    $count++;
+    my $name = $data->{Name};
+    my $basetype = $data->{BaseType};
+    my $entity = {
+      name => $name,
+      type => $data->{Type},
+      basetype => $basetype,
+      guid => $data->{BaseManagedEntityId},
+    };
+
+    if ($basetype eq "System.Service") {
+      if (defined $services->{$name}) {
+        die sprintf("Service '%s' already has been collected - name collision!", $name);
+      }
+      else {
+        $services->{$name} = $entity;
+      }
+    }
+    elsif ($basetype eq "System.Computer") {
+      if (defined $computers->{$name}) {
+        die sprintf("Computer '%s' already has been collected - name collision!", $name);
+      }
+      else {
+        $computers->{$name} = $entity;
+      }
+    }
+    else {
+      die sprintf "Unimplemented Type '%s'", $data->{Type};
+    }
+  }
+
+  debug "I retrieved %d rows and have collected %d services and %d computers.", 
+    $count, scalar(keys %$services), scalar(keys %$computers);
+
+  debug "Writing service config...";
+  foreach my $name (keys %$services) {
+    my $service = $services->{$name};
+    my $object = sprintf('
+object Service "%s" {
+  import "passive-scom-service"
+
+  host_name = "SCOM Services"
+
+  vars.scom_guid = "%s"
+  vars.scom_type = "%s"
+  vars.scom_basetype = "%s"
+}
+',
+      $name,
+      $name,
+      $service->{guid},
+      $service->{type},
+      $service->{basetype}
+    );
+    print $object;
+  }
+
+  debug "Writing computer config...";
+  foreach my $name (keys %$computers) {
+    my $computer = $computers->{$name};
+    my $object = sprintf('
+object Host "%s" {
+  import "generic-scom-host"
+
+  vars.scom_guid = "%s"
+  vars.scom_type = "%s"
+  vars.scom_basetype = "%s"
+}
+
+object Service "%s" {
+  import "passive-scom-service"
+
+  host_name = "%s"
+
+  vars.scom_guid = "%s"
+  vars.scom_type = "%s"
+  vars.scom_basetype = "%s"
+}
+',
+      $name,
+      $computer->{guid},
+      $computer->{type},
+      $computer->{basetype},
+      $ICINGA_SERVICE,
+      $name,
+      $computer->{guid},
+      $computer->{type},
+      $computer->{basetype}
+    );
+    print $object;
+  }
+
+  printf "\n# %d services\n# %d computers\n",
+    scalar(keys %$services), scalar(keys %$computers);
+
+  debug "Done with config...";
+  exit(0);
+}
+# }}}
+
+sub parse_mssql_timestamp { # {{{
+  my $ts = shift;
+  if ($ts =~ m/^(\w+) ([\s\d]{2}) (\d{4}) (\d\d:\d\d:\d\d):/) {
+    my $unix = str2time("$2 $1 $3 $4");
+    die sprintf "Could not convert parts to unix timestamp: %s", $ts if (!$unix);
+    return $unix;
+  }
+  else {
+    die sprintf "Could not parse timestamp '%s'", $ts;
+  }
+}
+# }}}
+
+sub pretty_timestamp { # {{{
+  return strftime("%Y-%m-%d %H:%M:%S", gmtime(shift));
+}
+# }}}
+
+sub retrieve_alerts { # {{{
+  debug "Let me read the alerts from SCOM's database...";
+
+  my $alerts = {
+    host => {},
+    services => {},
+    others => {},
+    all => [],
+  };
+
+  my $sth = $SCOMDB->prepare($QUERY_ALERTS)
+    or die "error preparing sql query for alerts: ".$SCOMDB->errstr;
+
+  my $res = $sth->execute()
+    or die "error querying alerts: ".$sth->errstr;
+
+  while (my $data = $sth->fetchrow_hashref) {
+    my $entity = $data->{EntityName};
+    my $basetype = $data->{EntityBaseType};
+    my $alert = {
+      entity      => $entity,
+      basetype    => $basetype,
+      entitytype  => $data->{EntityType},
+      timestamp   => parse_mssql_timestamp($data->{TimeRaised}),
+      severity    => $data->{Severity},
+      category    => $data->{Category},
+      name        => $data->{AlertName},
+      description => $data->{AlertDescription},
+      object      => $data->{ObjectName},
+      objecttype  => $data->{ObjectType},
+    };
+    if ($basetype eq "System.Computer") {
+      if (!defined $alerts->{host}->{$entity}) {
+        $alerts->{host}->{$entity} = [];
+      }
+      push @{$alerts->{host}->{$entity}}, $alert;
+    }
+    elsif ($basetype eq "System.Service") {
+      if (!defined $alerts->{service}->{$entity}) {
+        $alerts->{service}->{$entity} = [];
+      }
+      push @{$alerts->{service}->{$entity}}, $alert;
+    }
+    else {
+      push @{$alerts->{unassigned}}, $alert;
+    }
+    push @{$alerts->{all}}, $alert;
+  }
+
+  debug "Retreived %d alerts for %d hosts, %d services and %d other alerts",
+    scalar(@{$alerts->{all}}),
+    scalar(keys %{$alerts->{host}}),
+    scalar(keys %{$alerts->{services}}),
+    scalar(@{$alerts->{unassigned}})
+  ;
+  return $alerts;
+}
+# }}}
+
+sub format_alerts { # {{{
+  my $alerts = shift;
+  my $withentity = shift || 0;
+
+  my $output = "";
+  my $criticals = 0;
+  my $warnings = 0;
+  foreach my $alert (@$alerts) {
+    my $severity = "other";
+    if ($alert->{severity} == 2) {
+      $criticals++;
+      $severity = "CRITICAL";
+    }
+    elsif ($alert->{severity} == 1) {
+      $warnings++;
+      $severity = "WARNING";
+    }
+    my $object = $alert->{object};
+    my $entity = $alert->{entity};
+    $output .= sprintf "[%s] [%s] [%s] %s%s%s\n",
+      pretty_timestamp($alert->{timestamp}),
+      $alert->{category},
+      $severity,
+      (($withentity and $entity ne $object) ? $entity." - " : ""),
+      (($withentity or $object ne $entity) ? $object." - " : ""),
+      $alert->{name}
+    ;
+  }
+  # calc state
+  my $state = 3;
+  my $summary = "SCOM Alerts:";
+  if ($warnings > 0) {
+    $state = 1;
+    $summary .= " $warnings warnings";
+  }
+  if ($criticals > 0) {
+    $state = 2;
+    $summary .= " $criticals criticals";
+  }
+  return ($state, icinga_output($state, $summary."\n".$output));
+}
+# }}}
+
+sub monitor { # {{{
+  my $alerts = retrieve_alerts();
+
+  my $cleared = 0;
+  my $hosts = 0;
+  my $services = 0;
+  my $unassigned = 0;
+
+  # TODO: fall back to unassigned if host unknown by Icinga
+
+  foreach my $name (keys %{$alerts->{host}}) {
+    my $hostalerts = $alerts->{host}->{$name};
+
+    my ($state, $output) = format_alerts($hostalerts);
+
+    # TODO: test if host actually exists in Icinga
+    # if not, push to unassigned
+    submit_passive($name, $ICINGA_SERVICE, $state, $output);
+  }
+
+  icinga_exit(0, "Retreived %d alerts for %d hosts, %d services and %d other/unassigned alerts",
+    scalar(@{$alerts->{all}}),
+    scalar(keys %{$alerts->{host}}),
+    scalar(keys %{$alerts->{services}}),
+    scalar(@{$alerts->{unassigned}})
+  );
+
+}
+# }}}
+
+sub submit_passive { # {{{
+  my $host = shift;
+  my $service = shift;
+  my $state = shift;
+  my $output = shift;
+
+  $output =~ s/\r?\n/\\n/g;
+
+  if ($state !~ /^[0-3]$/) {
+    die sprintf "Invalid state '%s' for passive Icinga result!", $state;
+  }
+
+  my $command = sprintf "[%d] PROCESS_SERVICE_CHECK_RESULT;%s;%s;%s;%s",
+    time(), $host, $service, $state, $output;
+
+  debug "Sending command: %s", (length $command > 60 ? substr($command, 0, 60)."..." : $command);
+
+  if (!-p $ICINGA_CMD) {
+    die sprintf "Icinga command pipe '%s' not found or is not a named pipe (FIFO)!", $ICINGA_CMD;
+  }
+  open ICINGA, ">>", $ICINGA_CMD
+    or die sprintf "Could not open Icinga command pipe '%s' for writing: %s", $ICINGA_CMD, $!;
+  print ICINGA $command."\n";
+  close ICINGA;
+}
+# }}}
+
+sub main { # {{{
+  parse_options;
+
+  $SCOMDB = DBI->connect($SCOM_DB_DSN, $SCOM_DB_USER, $SCOM_DB_PASS)
+    or die "SCOM database connection failed: ".$DBI::errstr;
+
+  # TODO: enable
+  #$ICINGADB = DBI->connect($ICINGA_DB_DSN, $ICINGA_DB_USER, $ICINGA_DB_PASS)
+  #  or die "Icinga database connection failed: $DBI::errstr";
+
+  my $action = $ARGV[0];
+  if (!$action) {
+    icinga_exit(3, "No action provided");
+  }
+  if ($action eq "config") {
+    config;
+  }
+  elsif ($action eq "monitor") {
+    monitor;
+  }
+  else {
+    icinga_exit(3, "action invalid: $action");
+  }
+}
+# }}}
+
+#-----------------------------------------------------------
+
+main;
+
+# vi: ts=2 sw=2 expandtab foldmethod=marker :

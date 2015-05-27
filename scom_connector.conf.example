@@ -1,0 +1,32 @@
+#-----------------------------------------------------------
+# Config file of SCOM connector for Icinga 2
+#-----------------------------------------------------------
+# -*- mode: perl -*-
+
+#$ICINGA_CONNECTOR_HOST = "SCOM Connector";
+#$ICINGA_SERVICE = "SCOM Alerts";
+#$ICINGA_UNASSIGNED_SERVICE = "SCOM unassigned Alerts";
+
+# database account for SCOM
+# read-only access to:
+#  OperationsManager
+#  OperationsManagerDW
+#
+# TODO: specify tables
+#
+# Please make sure to set "tds version = 7.2"
+# inside "[global]" of /etc/freetds.conf
+$SCOM_DB_DSN  = "dbi:Sybase:server=SCOM\\SCOM";
+$SCOM_DB_USER = "icinga";
+$SCOM_DB_PASS = "readonly";
+
+# database access for Icinga
+# read-only access to Icinga's IDO database
+$ICINGA_DB_DSN  = "dbi:mysql:host=icinga;database=icinga";
+$ICINGA_DB_USER = "icinga";
+$ICINGA_DB_PASS = "icinga";
+
+# Icinga command pipe for submitting check results
+$ICINGA_CMD = "/var/run/icinga2/cmd/icinga2.cmd";
+
+# vi: filetype=perl :
