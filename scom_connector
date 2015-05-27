@@ -2,21 +2,10 @@
 #-------------------------------------------------------------------------------
 # SCOM Connector for Icinga 2
 #-------------------------------------------------------------------------------
-# (c) 2015 Markus Frosch <markus.frosch@netways.de>
+# (c) 2015 Markus Frosch <markus@lazyfrosch.de>
 #          NETWAYS GmbH <info@netways.de>
 #-------------------------------------------------------------------------------
-#
-# Required for this software is:
-# * FreeTDS - an free software implementation of MSSQL's API
-# * DBD::Sybase for perl - the perl database driver to FreeTDS
-# * DBD::mysql for perl - for connecting to Icinga's IDO
-#
-# Please make sure to set "tds version = 7.2"
-# inside "[global]" of /etc/freetds.conf
-#
-# Check "icinga2_scom.conf" for some basic objects that are required in the
-# Icinga 2 configuration.
-#
+# Please see README.md for detailed instructions!
 #-------------------------------------------------------------------------------
 # This program is free software; you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free Software
@@ -27,10 +16,8 @@
 # ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 # FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 #
-# You can find a full version of the license at:
-# http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+# You can find a full version of the license in the LICENSE file.
 #-------------------------------------------------------------------------------
-
 
 =head1 NAME
 
