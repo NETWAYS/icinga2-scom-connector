@@ -223,9 +223,15 @@ FROM icinga_objects so
 INNER JOIN icinga_customvariables cv1
   ON cv1.object_id = so.object_id AND cv1.varname = 'scom_basetype'
 WHERE
-  so.objecttype_id = 1 AND so.is_active = 1
+  so.objecttype_id = 2 AND so.is_active = 1
   AND so.name1 = ?
   AND cv1.varvalue = 'System.Service'
+";
+
+my $QUERY_ICINGA_CONFIGDUMP = "
+SELECT count(*) FROM icinga_programstatus
+WHERE config_dump_in_progress > 0
+  OR program_end_time > 0
 ";
 
 #-------------------------------------------------------}}}-
@@ -568,8 +574,8 @@ sub get_icinga_scom_services { # {{{
   my $sth = $ICINGADB->prepare($QUERY_ICINGA_SCOM_SERVICES)
     or die "error preparing sql query for Icinga services: ".$ICINGADB->errstr;
 
-  $sth->execute()
-    or die "error querying alerts: ".$sth->errstr;
+  $sth->execute($ICINGA_SERVICES_HOST)
+    or die "error querying services: ".$sth->errstr;
 
   while (my $data = $sth->fetchrow_hashref) {
     $services->{$data->{servicename}} = $data;
@@ -578,13 +584,28 @@ sub get_icinga_scom_services { # {{{
 }
 # }}}
 
+sub check_icinga_configdump { # {{{
+  debug "Checking if Icinga is currently dumping config...";
+
+  my $result = $ICINGADB->selectrow_arrayref($QUERY_ICINGA_CONFIGDUMP)
+    or die "error in sql query for Icinga configdump: ".$ICINGADB->errstr;
+
+  if ($result->[0] > 0) {
+    icinga_exit(3, "Icinga is currently reloading data into IDO.".
+      " We can not work at that point!");
+  }
+}
+# }}}
+
 sub monitor { # {{{
   connect_scom_database();
   connect_icinga_database();
+  check_icinga_configdump();
 
   my $alerts = retrieve_alerts();
 
-  my $cleared = 0;
+  my $cleared_hosts = 0;
+  my $cleared_services = 0;
   my $hosts = 0;
   my $services = 0;
   my $unassigned = 0;
@@ -594,8 +615,7 @@ sub monitor { # {{{
   my $icinga_scom_services = get_icinga_scom_services();
   my $icinga_scom_services_alerted = {};
 
-  # TODO: fall back to unassigned if host unknown by Icinga
-
+  # Hosts
   foreach my $name (keys %{$alerts->{host}}) {
     my $hostalerts = $alerts->{host}->{$name};
 
@@ -613,6 +633,7 @@ sub monitor { # {{{
       }
     }
   }
+  # SCOM Services
   foreach my $name (keys %{$alerts->{service}}) {
     my $servicealerts = $alerts->{service}->{$name};
 
@@ -631,16 +652,33 @@ sub monitor { # {{{
     }
   }
 
+  # Unassigned Alerts
   my ($state, $output) = format_alerts($alerts->{unassigned});
 
   $unassigned = scalar @{$alerts->{unassigned}};
   submit_passive($ICINGA_CONNECTOR_HOST, $ICINGA_UNASSIGNED_SERVICE, $state, $output);
 
-  icinga_exit(0, "Retreived %d alerts for %d hosts, %d services and %d other/unassigned alerts",
+  # Clearing
+  foreach my $host (keys %$icinga_scom_hosts) {
+    next if defined $alerts->{host}->{$host};
+
+    $cleared_hosts++;
+    submit_passive($host, $ICINGA_SERVICE, 0, "No active alerts in SCOM");
+  }
+  foreach my $service (keys %$icinga_scom_services) {
+    next if defined $alerts->{service}->{$service};
+
+    $cleared_services++;
+    submit_passive($ICINGA_SERVICES_HOST, $service, 0, "No active alerts in SCOM");
+  }
+
+  icinga_exit(0, "Retreived %d alerts for %d hosts, %d services and %d other/unassigned alerts. I've send an OK state to %d hosts and %d services.",
     scalar(@{$alerts->{all}}),
     $hosts,
     $services,
-    $unassigned
+    $unassigned,
+    $cleared_hosts,
+    $cleared_services
   );
 
 }
