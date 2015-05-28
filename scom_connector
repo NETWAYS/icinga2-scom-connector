@@ -632,10 +632,15 @@ sub monitor { # {{{
   }
 
   # Unassigned Alerts
-  my ($state, $output) = format_alerts($alerts->{unassigned});
+  if (@{$alerts->{unassigned}} > 0) {
+    my ($state, $output) = format_alerts($alerts->{unassigned});
 
-  $unassigned = scalar @{$alerts->{unassigned}};
-  submit_passive($ICINGA_CONNECTOR_HOST, $ICINGA_UNASSIGNED_SERVICE, $state, $output);
+    $unassigned = scalar @{$alerts->{unassigned}};
+    submit_passive($ICINGA_CONNECTOR_HOST, $ICINGA_UNASSIGNED_SERVICE, $state, $output);
+  }
+  else {
+    submit_passive($ICINGA_CONNECTOR_HOST, $ICINGA_UNASSIGNED_SERVICE, 0, "No unassignable alerts in SCOM");
+  }
 
   # Clearing
   foreach my $host (keys %$icinga_scom_hosts) {
