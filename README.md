@@ -3,8 +3,7 @@ SCOM Connector for Icinga 2
 
 The SCOM connector will help you import alert data from SCOM into Icinga 2.
 
-It helps you to update Icinga's configuration with Hosts and Services (not the
-Icinga/Nagios meaning of service) from SCOM.
+It helps you to update Icinga's configuration with Hosts monitored by SCOM.
 
 The other part of the tool will query all open alerts from SCOM and publish that
 status into Icinga, so you can see and get alerted about open problems.
@@ -37,7 +36,6 @@ This basic file will give you a few things:
 * Host "SCOM Connector"
   * Service "SCOM Alert collection" - this runs the state synchronization
   * Service "SCOM unassigned Alerts" - alerts that can not be assigned get send here
-* Host "SCOM Services"
 
 When you run the tool in config mode:
 
@@ -49,7 +47,6 @@ It will output:
 
 * a Host object for every computer monitored by SCOM (dummy check from template)
 * with a Service called "SCOM Alerts" (in passive mode)
-* a Icinga Service for every SCOM Service monitored (assigned to the Host "SCOM Services")
 
 TODO: example
 
@@ -64,9 +61,9 @@ That will do the following:
 
 1. Retrieve all alerts from SCOM's database
   * will be aggregated by host, server, and other alerts (generic SCOM alerts)
-2. Get all SCOM hosts and services Icinga knows about
+2. Get all SCOM hosts Icinga knows about
    (so we can avoid problems with config drift)
-3. For each hosts and service build a summary of active alerts
+3. For each hosts build a summary of active alerts
 4. Summarize all alerts that could not be assigned to an object Icinga knows
 5. Submit the status to Icinga via its command pipe
 6. Clear the status of objects we have not updated with alerts in this run
