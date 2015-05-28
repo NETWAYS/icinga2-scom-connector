@@ -147,6 +147,32 @@ You can contribute to this project via GitHub: https://github.com/lazyfrosch/ici
 * Commit and push to your fork
 * Send me a pull request
 
+## Debugging
+
+There are features to help with debugging.
+
+Dumping will allow you to write the data retreived from databases to files.
+
+These dumped files can be loaded in simulation mode, in this mode don't
+have to be able to connect to any database or the command pipe.
+
+```
+scom_connector config --dump
+scom_connector monitor --dump
+```
+
+This will write `entitydata.dump` (config), `alertdata.dump` and
+`icingahostdata.dump` (monitor) to the current working directory.
+
+Simulation mode will expect these files also in CWD.
+
+```
+scom_connector config --simulate
+scom_connector monitor --simulate
+```
+
+You should anonymize those dump files, before sending them to anyone...
+
 ## License
 
 This tool was created during my work as a consultant for [NETWAYS](http://www.netways.de) - we love open source.

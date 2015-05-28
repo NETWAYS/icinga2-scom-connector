@@ -39,6 +39,26 @@ Print this help
 
 Run the tool in debug mode
 
+=item B<--dump>
+
+Dump database data. Depends on the action.
+
+"config" will write "entitydata.dump"
+
+"monitor" will write "alertdata.dump" and "icingahostdata.dump"
+
+The files will be put into the current working directory.
+
+=item B<--simulate>
+
+Simulate database data, depending on the action.
+
+"config" will read from "entitydata.dump"
+
+"monitor" will read from "alertdata.dump" and "icingahostdata.dump"
+
+The files will be read from the current working directory.
+
 =item B<action>
 
 What to do:
@@ -73,7 +93,7 @@ sub signal_handler {
   exit(3);
 }
 
-use Data::Dumper; # TODO: needed?
+use Data::Dumper;
 use Getopt::Long;
 use Pod::Usage;
 use DBI;
@@ -85,6 +105,12 @@ use POSIX 'strftime';
 my $CLEANEXIT = 0;
 
 my $DEBUG;
+my $DUMP;
+my $SIMULATE;
+
+my $ENTITYDATA;
+my $ALERTDATA;
+my $ICINGAHOSTDATA;
 
 my $SCOMDB;
 my $ICINGADB;
@@ -146,6 +172,7 @@ my $QUERY_ENTITIES = "
 
 my $QUERY_ALERTS = "
 SELECT
+  alert.AlertId,
   topentity.Name AS EntityName,
   topentitybasetype.TypeName AS EntityBaseType,
   topentitytype.TypeName AS EntityType,
@@ -255,6 +282,8 @@ sub parse_options { # {{{
     "debug|d"        => \$DEBUG,
     "config|C=s"     => \$config,
     "help|h"         => \$help,
+    "dump"           => \$DUMP,
+    "simulate"       => \$SIMULATE,
     # TODO: implement
     #"icinga-cmd|C=s" => \$ICINGA_CMD,
     #"icinga-db-dsn|=s" => \$ICINGA_DB_DSN,
@@ -280,26 +309,71 @@ sub parse_options { # {{{
     eval $config_data;
     die "Error while reading config file: $@" if $@;
   }
+  if ($DUMP and $SIMULATE) {
+    die "--dump and --simulate can't be enabled at the same time!";
+  }
+  if ($DUMP or $SIMULATE) {
+    $DEBUG = 1;
+  }
+  if ($SIMULATE) {
+    debug "NOTE: running in simulation mode, no action will actually be done.";
+  }
+}
+# }}}
+
+sub write_dump { # {{{
+  my $filename = shift;
+
+  debug "Dumping data to '%s'...", $filename;
+
+  open DUMP, ">", $filename
+    or die "Could not write dump to '$filename': $!";
+  print DUMP Dumper(shift);
+  close DUMP;
+}
+# }}}
+
+sub read_dump { # {{{
+  my $filename = shift;
+
+  debug "Reading dump data from '%s'...", $filename;
+
+  my $dump = "";
+  open DUMP, "<", $filename
+    or die "Could not read dump from '$filename': $!";
+  while (<DUMP>) {
+    $dump .= $_;
+  }
+  close DUMP;
+  my $VAR1;
+  eval($dump) or die "Evaluation of dump failed: $@";
+  return $VAR1;
 }
 # }}}
 
 sub config { # {{{
-  connect_scom_database();
+  if ($SIMULATE) {
+    debug "Let me read the dumped config data...";
+    $ENTITYDATA = read_dump("entitydata.dump");
+  }
+  else {
+    debug "Let me connect to SCOM and query objects...";
 
-  debug "Ok, let me collect config data...";
+    connect_scom_database();
+
+    $ENTITYDATA = $SCOMDB->selectall_hashref($QUERY_ENTITIES, 'Name')
+      or die "error querying for entities: ".$SCOMDB->errstr;
+
+    if ($DUMP) {
+      write_dump("entitydata.dump", $ENTITYDATA);
+    }
+  }
 
   my $computers = {};
-
-  my $sth = $SCOMDB->prepare($QUERY_ENTITIES)
-    or die "error preparing sql query for entities: ".$SCOMDB->errstr;
-
-  my $res = $sth->execute()
-    or die "error querying entities: ".$sth->errstr;
-
   my $count = 0;
-  while (my $data = $sth->fetchrow_hashref) {
+  foreach my $name (keys %$ENTITYDATA) {
     $count++;
-    my $name = $data->{Name};
+    my $data = $ENTITYDATA->{$name};
     my $basetype = $data->{BaseType};
     my $entity = {
       name => $name,
@@ -385,21 +459,30 @@ sub pretty_timestamp { # {{{
 # }}}
 
 sub retrieve_alerts { # {{{
-  debug "Let me read the alerts from SCOM's database...";
 
   my $alerts = {
     host => {},
-    others => {},
+    unassigned => [],
     all => [],
   };
 
-  my $sth = $SCOMDB->prepare($QUERY_ALERTS)
-    or die "error preparing sql query for alerts: ".$SCOMDB->errstr;
+  if ($SIMULATE) {
+    debug "Let me read the dumped alert data...";
+    $ALERTDATA = read_dump("alertdata.dump");
+  }
+  else {
+    debug "Let me read the alerts from SCOM's database...";
 
-  my $res = $sth->execute()
-    or die "error querying alerts: ".$sth->errstr;
+    $ALERTDATA = $SCOMDB->selectall_hashref($QUERY_ALERTS, 'AlertId')
+      or die "error querying for alerts: ".$SCOMDB->errstr;
 
-  while (my $data = $sth->fetchrow_hashref) {
+    if ($DUMP) {
+      write_dump("alertdata.dump", $ALERTDATA);
+    }
+  }
+
+  foreach my $alertid (keys %$ALERTDATA) {
+    my $data = $ALERTDATA->{$alertid};
     my $entity = $data->{EntityName};
     my $basetype = $data->{EntityBaseType};
     my $alert = {
@@ -479,20 +562,24 @@ sub format_alerts { # {{{
 # }}}
 
 sub get_icinga_scom_hosts { # {{{
-  debug "Selecting SCOM Icinga hosts from Icinga's DB...";
-
-  my $hosts = {};
-
-  my $sth = $ICINGADB->prepare($QUERY_ICINGA_HOSTS)
-    or die "error preparing sql query for Icinga hosts: ".$ICINGADB->errstr;
-
-  $sth->execute()
-    or die "error querying alerts: ".$sth->errstr;
-
-  while (my $data = $sth->fetchrow_hashref) {
-    $hosts->{$data->{hostname}} = $data;
+  if ($SIMULATE) {
+    debug "Let me read the dumped Icinga host data...";
+    $ICINGAHOSTDATA = read_dump("icingahostdata.dump");
   }
-  return $hosts;
+  else {
+    debug "Selecting SCOM Icinga hosts from Icinga's DB...";
+
+    connect_icinga_database();
+
+    $ICINGAHOSTDATA = $ICINGADB->selectall_hashref($QUERY_ICINGA_HOSTS, 'hostname')
+      or die "error querying for Icinga hosts: ".$ICINGADB->errstr;
+
+    if ($DUMP) {
+      write_dump("icingahostdata.dump", $ICINGAHOSTDATA);
+    }
+  }
+
+  return $ICINGAHOSTDATA;
 }
 # }}}
 
@@ -510,9 +597,11 @@ sub check_icinga_configdump { # {{{
 # }}}
 
 sub monitor { # {{{
-  connect_scom_database();
-  connect_icinga_database();
-  check_icinga_configdump();
+  if (!$SIMULATE) {
+    connect_scom_database();
+    connect_icinga_database();
+    check_icinga_configdump();
+  }
 
   my $alerts = retrieve_alerts();
 
@@ -581,7 +670,12 @@ sub submit_passive { # {{{
   my $command = sprintf "[%d] PROCESS_SERVICE_CHECK_RESULT;%s;%s;%s;%s",
     time(), $host, $service, $state, $output;
 
-  debug "Sending command: %s", (length $command > 140 ? substr($command, 0, 140)."..." : $command);
+  my $term = "Sending";
+  $term = "Would send" if ($SIMULATE);
+
+  debug "%s command: %s", $term, (length $command > 140 ? substr($command, 0, 140)."..." : $command);
+
+  return if $SIMULATE;
 
   if (!-p $ICINGA_CMD) {
     die sprintf "Icinga command pipe '%s' not found or is not a named pipe (FIFO)!", $ICINGA_CMD;
