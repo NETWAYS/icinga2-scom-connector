@@ -39,6 +39,10 @@ Print this help
 
 Run the tool in debug mode
 
+=item B<--version|-V>
+
+Print the version of the script.
+
 =item B<--dump>
 
 Dump database data. Depends on the action.
@@ -81,6 +85,8 @@ Also we make sure to clear all old Alerts from Icinga's status.
 
 use strict;
 use warnings;
+
+my $VERSION = "0.1";
 
 $SIG{INT} = \&signal_handler;
 $SIG{TERM} = \&signal_handler;
@@ -278,12 +284,14 @@ sub icinga_exit { # {{{
 sub parse_options { # {{{
   my $help;
   my $config;
+  my $version;
   GetOptions(
     "debug|d"        => \$DEBUG,
     "config|C=s"     => \$config,
     "help|h"         => \$help,
     "dump"           => \$DUMP,
     "simulate"       => \$SIMULATE,
+    "version|V"      => \$version,
     # TODO: implement
     #"icinga-cmd|C=s" => \$ICINGA_CMD,
     #"icinga-db-dsn|=s" => \$ICINGA_DB_DSN,
@@ -291,6 +299,11 @@ sub parse_options { # {{{
     #"icinga-db-pass|=s" => \$ICINGA_DB_DSN,
   ) or die "error in command line arguments";
   pod2usage(1) if $help;
+
+  if ($version) {
+    print "scom_connector - Version: $VERSION\n";
+    exit(1);
+  }
 
   if ($config) {
     if (! -r $config) {

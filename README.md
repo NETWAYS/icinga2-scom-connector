@@ -8,10 +8,6 @@ It helps you to update Icinga's configuration with Hosts monitored by SCOM.
 The other part of the tool will query all open alerts from SCOM and publish that
 status into Icinga, so you can see and get alerted about open problems.
 
-## Notice
-
-This tool is currently work in progress, but feel free to play and comment! :-)
-
 ## Requirements
 
 * Perl, at least 5.10 (tested on that platform)
