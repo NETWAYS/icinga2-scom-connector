@@ -522,7 +522,7 @@ sub retrieve_alerts { # {{{
     push @{$alerts->{all}}, $alert;
   }
 
-  debug "Retreived %d alerts for %d hosts and %d other alerts",
+  debug "Retrieved %d alerts for %d hosts and %d other alerts",
     scalar(@{$alerts->{all}}),
     scalar(keys %{$alerts->{host}}),
     scalar(@{$alerts->{unassigned}})
@@ -663,7 +663,7 @@ sub monitor { # {{{
     submit_passive($host, $ICINGA_SERVICE, 0, "No active alerts in SCOM");
   }
 
-  icinga_exit(0, "Retreived %d alerts for %d hosts and %d other/unassigned alerts. I've send an OK state to %d hosts.",
+  icinga_exit(0, "Retrieved %d alerts for %d hosts and %d other/unassigned alerts. I've send an OK state to %d hosts.",
     scalar(@{$alerts->{all}}),
     $hosts,
     $unassigned,
