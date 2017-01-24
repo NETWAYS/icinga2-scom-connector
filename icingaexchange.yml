@@ -1,7 +1,7 @@
 ---
 name: icinga2-scom-connector
 description: "file:///README.md"
-url: "https://github.com/lazyfrosch/icinga2-scom-connector"
+url: "https://github.com/NETWAYS/icinga2-scom-connector"
 tags: external, other monitoring tool
 vendor: Microsoft
 target: SCOM

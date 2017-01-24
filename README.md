@@ -137,7 +137,7 @@ See `scom_connector.conf.example` for examples.
 
 ## Contributing
 
-You can contribute to this project via GitHub: https://github.com/lazyfrosch/icinga2-scom-connector
+You can contribute to this project via GitHub: https://github.com/NETWAYS/icinga2-scom-connector
 
 * Fork the project
 * Commit and push to your fork
@@ -173,15 +173,16 @@ You should anonymize those dump files, before sending them to anyone...
 
 This tool was created during my work as a consultant for [NETWAYS](http://www.netways.de) - we love open source.
 
-Copyright (c) 2015 Markus Frosch <markus@lazyfrosch.de>, NETWAYS GmbH <info@netways.de>
+    Copyright (c) 2015 Markus Frosch <markus.frosch@netways.de>
+                  2015 NETWAYS GmbH <info@netways.de>
 
-This program is free software; you can redistribute it and/or modify it under
-the terms of the GNU General Public License as published by the Free Software
-Foundation; either version 2 of the License, or (at your option) any later
-version.
+    This program is free software; you can redistribute it and/or modify it under
+    the terms of the GNU General Public License as published by the Free Software
+    Foundation; either version 2 of the License, or (at your option) any later
+    version.
 
-This program is distributed in the hope that it will be useful, but WITHOUT
-ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+    This program is distributed in the hope that it will be useful, but WITHOUT
+    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+    FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
-You can find a full version of the license in the LICENSE file.
+    You can find a full version of the license in the LICENSE file.
