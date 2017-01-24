@@ -15,4 +15,5 @@ releases:
       -
         name: scom_connector
         url: file:///scom_connector
+        description: "First release"
         checksum: 79a1103974041049728e053ddadaa4b5
