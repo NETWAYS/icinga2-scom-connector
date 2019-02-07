@@ -1,6 +1,13 @@
 SCOM Connector for Icinga 2
 ===========================
 
+## NOT MAINTAINED
+
+This software was build as proof of concept, feel free to use it, but it is
+**not maintained or supported** by NETWAYS.
+
+## Info
+
 The SCOM connector will help you import alert data from SCOM into Icinga 2.
 
 It helps you to update Icinga's configuration with Hosts monitored by SCOM.
